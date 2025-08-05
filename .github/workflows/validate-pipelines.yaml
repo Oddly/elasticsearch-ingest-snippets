@@ -1,4 +1,4 @@
-# GitHub Actions workflow to validate Elasticsearch ingest pipelines
+# Enhanced GitHub Actions workflow to validate Elasticsearch ingest pipelines
 name: Validate Ingest Pipelines
 
 on:
@@ -17,7 +17,7 @@ jobs:
         ports:
           - 9200:9200
         env:
-          discovery.type: "single-node"
+          discovery.type: single-node
           xpack.security.enabled: "false"
           ES_JAVA_OPTS: "-Xms512m -Xmx512m"
 
@@ -25,6 +25,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          # Fetch more history for better diff detection
           fetch-depth: 0
 
       - name: Install jq
@@ -38,7 +39,7 @@ jobs:
             echo -n "."
             sleep 2
           done
-          echo "Elasticsearch is responding."
+          echo "Elasticsearch is responding!"
           '
 
       - name: Wait for Elasticsearch cluster health
@@ -49,37 +50,68 @@ jobs:
             echo -n "."
             sleep 2
           done
-          echo "Elasticsearch cluster is healthy."
+          echo "Elasticsearch cluster is healthy!"
           '
+          # Show final cluster status
           curl -s "http://localhost:9200/_cluster/health" | jq '.'
 
       - name: Determine pipelines to test
         id: changed-pipelines
         run: |
-          # This step remains the same...
           set -eo pipefail
+          
           if [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo "Detecting changed pipelines in Pull Request..."
+            echo "🔍 Detecting changed pipelines in PR..."
+            
+            # Get the base branch commit
             BASE_SHA="${{ github.event.pull_request.base.sha }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            
+            echo "Comparing $BASE_SHA..$HEAD_SHA"
+            
+            # Find all changed files in pipelines directory
             CHANGED_FILES=$(git diff --name-only "$BASE_SHA..$HEAD_SHA" -- pipelines/ || echo "")
+            
             if [ -z "$CHANGED_FILES" ]; then
-              echo "No pipeline files changed." && echo "test_count=0" >> $GITHUB_OUTPUT && exit 0
+              echo "No pipeline files changed in this PR."
+              echo "pipelines_to_test=" >> $GITHUB_OUTPUT
+              echo "test_count=0" >> $GITHUB_OUTPUT
+              exit 0
             fi
+            
+            echo "Changed files:"
+            echo "$CHANGED_FILES"
+            
+            # Extract unique pipeline directories from changed files
             PIPELINE_DIRS=$(echo "$CHANGED_FILES" | grep "^pipelines/" | cut -d'/' -f1,2 | sort -u || echo "")
+            
             if [ -z "$PIPELINE_DIRS" ]; then
-              echo "No pipeline directories changed." && echo "test_count=0" >> $GITHUB_OUTPUT && exit 0
+              echo "No pipeline directories affected by changes."
+              echo "pipelines_to_test=" >> $GITHUB_OUTPUT
+              echo "test_count=0" >> $GITHUB_OUTPUT
+              exit 0
             fi
+            
+            # Convert to space-separated list and count
             PIPELINES_LIST=$(echo "$PIPELINE_DIRS" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
             PIPELINE_COUNT=$(echo "$PIPELINE_DIRS" | wc -l)
-            echo "Will test $PIPELINE_COUNT pipeline(s)."
+            
+            echo "Pipeline directories to test:"
+            echo "$PIPELINE_DIRS"
+            echo ""
+            echo "Will test $PIPELINE_COUNT pipeline(s) that have changes."
+            
             echo "pipelines_to_test=$PIPELINES_LIST" >> $GITHUB_OUTPUT
             echo "test_count=$PIPELINE_COUNT" >> $GITHUB_OUTPUT
+            
           else
-            echo "Running on main branch - testing all pipelines..."
+            echo "🔍 Running on main branch - testing all pipelines..."
+            # On main branch (push), test all pipelines
             ALL_PIPELINES=$(find pipelines -type d -mindepth 1 -maxdepth 1 | tr '\n' ' ' | sed 's/[[:space:]]*$//' || echo "")
             PIPELINE_COUNT=$(find pipelines -type d -mindepth 1 -maxdepth 1 | wc -l || echo "0")
-            echo "Found $PIPELINE_COUNT total pipeline(s)."
+            
+            echo "Found $PIPELINE_COUNT total pipeline(s) to test."
+            
             echo "pipelines_to_test=$ALL_PIPELINES" >> $GITHUB_OUTPUT
             echo "test_count=$PIPELINE_COUNT" >> $GITHUB_OUTPUT
           fi
@@ -93,11 +125,11 @@ jobs:
           TEST_COUNT="${{ steps.changed-pipelines.outputs.test_count }}"
           
           if [ "$TEST_COUNT" -eq 0 ]; then
-            echo "No pipelines to test - skipping validation."
+            echo "✅ No pipelines to test - skipping validation."
             exit 0
           fi
           
-          echo "Testing $TEST_COUNT pipeline(s)..."
+          echo "🧪 Testing $TEST_COUNT pipeline(s)..."
           echo ""
           
           EXIT_CODE=0
@@ -105,69 +137,117 @@ jobs:
           TESTS_PASSED=0
           TESTS_FAILED=0
 
-          read -r -a PIPELINE_ARRAY <<< "$PIPELINES_TO_TEST"
-
-          for dir in "${PIPELINE_ARRAY[@]}"; do
+          # Convert space-separated list back to array
+          for dir in $PIPELINES_TO_TEST; do
             PIPELINE_FILE="$dir/pipeline.json"
             EXAMPLE_FILE="$dir/simulate_example.json"
             RESULTS_FILE="$dir/simulate_results.json"
 
+            # Check if all required files exist for a test
             if [ -f "$PIPELINE_FILE" ] && [ -f "$EXAMPLE_FILE" ] && [ -f "$RESULTS_FILE" ]; then
               echo "---"
-              echo "[TEST] Testing pipeline in directory: $dir"
+              echo "🧪 [TEST] Testing pipeline in directory: $dir"
               TESTS_RUN=$((TESTS_RUN + 1))
 
-              # FIX: Build the payload by writing raw text to a temporary file.
-              # This is the most robust method and avoids all parsing/quoting issues.
-              TMP_PAYLOAD_FILE=$(mktemp)
-              echo "{" > "$TMP_PAYLOAD_FILE"
-              echo '"pipeline":' >> "$TMP_PAYLOAD_FILE"
-              cat "$PIPELINE_FILE" >> "$TMP_PAYLOAD_FILE"
-              echo ',' >> "$TMP_PAYLOAD_FILE"
-              echo '"docs":' >> "$TMP_PAYLOAD_FILE"
-              jq '.docs' "$EXAMPLE_FILE" >> "$TMP_PAYLOAD_FILE"
-              echo "}" >> "$TMP_PAYLOAD_FILE"
+              # Build JSON payload - convert triple-quoted strings to valid JSON first
+              # This allows keeping human-readable pipeline files while making them jq-compatible
               
-              # Use the temporary file directly with curl's @ syntax.
+              # Convert triple-quoted strings in pipeline file to properly escaped JSON
+              CLEAN_PIPELINE=$(python3 -c "
+import json
+import re
+import sys
+
+def fix_triple_quotes(content):
+    # Replace triple quotes with properly escaped strings
+    def replace_triple_quote(match):
+        # Extract the content between triple quotes
+        inner_content = match.group(1)
+        # Escape the content for JSON
+        escaped = json.dumps(inner_content)[1:-1]  # Remove outer quotes from json.dumps
+        return '\"' + escaped + '\"'
+    
+    # Pattern to match triple-quoted strings
+    pattern = r'\"\"\"(.*?)\"\"\"'
+    return re.sub(pattern, replace_triple_quote, content, flags=re.DOTALL)
+
+try:
+    with open('$PIPELINE_FILE', 'r') as f:
+        content = f.read()
+    
+    fixed_content = fix_triple_quotes(content)
+    
+    # Validate it's now valid JSON
+    json.loads(fixed_content)
+    
+    # Output the fixed JSON
+    print(fixed_content)
+    
+except Exception as e:
+    print(f'Error processing pipeline file: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>/dev/null)
+
+              if [ $? -ne 0 ]; then
+                echo "❌ [ERROR] Failed to process pipeline file $PIPELINE_FILE"
+                echo "Could not convert triple-quoted strings to valid JSON"
+                EXIT_CODE=1
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+                continue
+              fi
+              
+              # Validate example file is valid JSON
+              if ! jq empty "$EXAMPLE_FILE" 2>/dev/null; then
+                echo "❌ [ERROR] Invalid JSON in $EXAMPLE_FILE"
+                EXIT_CODE=1
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+                continue
+              fi
+              
+              # Build the payload using the cleaned pipeline JSON
+              PAYLOAD=$(echo "$CLEAN_PIPELINE" | jq -s --slurpfile docs "$EXAMPLE_FILE" '{"pipeline": .[0], "docs": $docs[0].docs}')
+
+              # Run the _simulate API and normalize the response
               ACTUAL_RESULT=$(curl -s -X POST "http://localhost:9200/_ingest/pipeline/_simulate" \
                 -H "Content-Type: application/json" \
-                --data-binary @"$TMP_PAYLOAD_FILE" | jq -S 'del(.. | .timestamp?)')
+                --data-binary "$PAYLOAD" | jq -S 'del(.. | .timestamp?)')
               
-              rm "$TMP_PAYLOAD_FILE" # Clean up
-
+              # Load and normalize the expected result
               EXPECTED_RESULT=$(jq -S 'del(.. | .timestamp?)' "$RESULTS_FILE")
 
+              # Compare results
               if [[ "$ACTUAL_RESULT" == "$EXPECTED_RESULT" ]]; then
-                echo "[SUCCESS] Simulation result matches expected result."
+                echo "✅ [SUCCESS] Simulation result matches expected result."
                 TESTS_PASSED=$((TESTS_PASSED + 1))
               else
-                echo "[FAILURE] Simulation result does not match expected result."
+                echo "❌ [FAILURE] Simulation result does not match expected result."
                 echo "---------- EXPECTED ----------"
                 echo "$EXPECTED_RESULT"
                 echo "----------- ACTUAL -----------"
                 echo "$ACTUAL_RESULT"
                 echo "----------------------------"
+                # Show diff for debugging
                 diff --unified <(echo "$EXPECTED_RESULT") <(echo "$ACTUAL_RESULT") || true
                 EXIT_CODE=1
                 TESTS_FAILED=$((TESTS_FAILED + 1))
               fi
             else
               echo "---"
-              echo "[INFO] Skipping directory $dir (missing required .json files for a test)"
+              echo "ℹ️  [INFO] Skipping directory $dir (missing required .json files for a test)"
             fi
           done
 
           echo ""
-          echo "Test Summary:"
+          echo "📊 Test Summary:"
           echo "   Tests run: $TESTS_RUN"
           echo "   Passed: $TESTS_PASSED"
           echo "   Failed: $TESTS_FAILED"
           echo ""
 
           if [ $EXIT_CODE -ne 0 ]; then
-            echo "One or more pipeline tests failed."
+            echo "❌ One or more pipeline tests failed."
           else
-            echo "All pipeline tests passed."
+            echo "✅ All pipeline tests passed!"
           fi
           
           exit $EXIT_CODE
