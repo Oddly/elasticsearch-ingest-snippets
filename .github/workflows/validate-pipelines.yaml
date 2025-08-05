@@ -15,7 +15,7 @@ jobs:
         image: elasticsearch/elasticsearch:9.1.0 # Use a specific version for consistency
         ports:
           - 9200:9200
-        environment:
+        env:
           discovery.type: single-node
           xpack.security.enabled: "false" # Disable security for simplicity in CI
           ES_JAVA_OPTS: "-Xms512m -Xmx512m" # Keep memory usage low
