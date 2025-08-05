@@ -96,23 +96,20 @@ def simulate_pipeline(pipeline_data, docs_data, elasticsearch_url="http://localh
         raise Exception(f"Elasticsearch simulation failed: {e}")
 
 def get_pipelines_to_test():
-    """Determine which pipeline directories to test based on Git changes."""
-    changed_files_str = os.environ.get('CHANGED_FILES', '').strip()
-    
-    if not changed_files_str:
-        print("No changed files detected in 'pipelines' directory. Skipping validation.")
+    """
+    Determine which pipeline directories to test.
+    This is driven by the PIPELINES_TO_TEST environment variable, which
+    contains a space-separated list of directories.
+    """
+    pipelines_str = os.environ.get('PIPELINES_TO_TEST', '').strip()
+
+    if not pipelines_str:
+        print("No pipelines to test. Skipping validation.")
         return []
-    
-    # Extract unique parent directories from the list of changed files
-    changed_files = changed_files_str.split()
-    pipeline_dirs = set()
-    for file_path in changed_files:
-        path = Path(file_path)
-        # Assuming structure is pipelines/<pipeline_name>/...
-        if path.parts and path.parts[0] == 'pipelines' and len(path.parts) > 1:
-            pipeline_dirs.add(str(Path(path.parts[0]) / path.parts[1]))
-            
-    return sorted(list(pipeline_dirs))
+
+    # The string is already a space-separated list of directories
+    return pipelines_str.split()
+
 
 def main():
     wait_for_elasticsearch()

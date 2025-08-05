@@ -7,14 +7,18 @@ on:
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
-
+    inputs:
+      pipeline_directory:
+        description: 'The single pipeline directory to test (e.g., pipelines/x509_cert)'
+        required: true
+        type: string
 
 jobs:
   validate:
     runs-on: ubuntu-latest
     services:
       elasticsearch:
-        image: docker.elastic.co/elasticsearch/elasticsearch:8.10.0
+        image: docker.elastic.co/elasticsearch/elasticsearch:9.1.0
         ports:
           - 9200:9200
         env:
@@ -31,11 +35,25 @@ jobs:
 
       - name: Find changed pipeline files
         id: changed-files
+        if: github.event_name != 'workflow_dispatch'
         uses: tj-actions/changed-files@v44
         with:
           files: pipelines/**
+          dir_names: 'true'
           # We want the output as a space-separated string for the env var
           separator: " "
+
+      # This new step determines the final list of directories to test
+      - name: Set test scope
+        id: test-scope
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "Test scope is from manual input: ${{ inputs.pipeline_directory }}"
+            echo "pipelines_to_test=${{ inputs.pipeline_directory }}" >> $GITHUB_OUTPUT
+          else
+            echo "Test scope is from changed files: ${{ steps.changed-files.outputs.all_changed_files }}"
+            echo "pipelines_to_test=${{ steps.changed-files.outputs.all_changed_files }}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -46,7 +64,7 @@ jobs:
         run: pip install -r scripts/requirements.txt
 
       - name: Wait for Elasticsearch and run validation
-        # Pass the space-delimited list of changed files to the script
         env:
-          CHANGED_FILES: "${{ steps.changed-files.outputs.all_changed_files }}"
+          # Use the output from our new "Set test scope" step
+          PIPELINES_TO_TEST: "${{ steps.test-scope.outputs.pipelines_to_test }}"
         run: python3 scripts/validate_pipelines.py
