@@ -6,6 +6,7 @@ import requests
 import sys
 import time
 from pathlib import Path
+from jsondiff import diff, Dumper
 
 def wait_for_elasticsearch(elasticsearch_url="http://localhost:9200", timeout=120):
     """Wait for Elasticsearch to be ready and healthy"""
@@ -112,6 +113,18 @@ def get_pipelines_to_test():
 
 
 def main():
+    # --- NEW LOGIC TO DETERMINE DEBUG BEHAVIOR ---
+    # Determine if we should show a detailed diff on failure.
+    # For automatic runs (push/PR), we always want the diff.
+    # For manual runs (workflow_dispatch), we respect the user's input.
+    event_name = os.environ.get('GITHUB_EVENT_NAME')
+    if event_name == 'workflow_dispatch':
+        debug_enabled_str = os.environ.get('DEBUG_ENABLED', 'false')
+        debug_on_failure = debug_enabled_str.lower() == 'true'
+        print(f"Manual run detected. Visual diff on failure: {'Enabled' if debug_on_failure else 'Disabled'}")
+    else:
+        debug_on_failure = True # Always enable for automated CI runs
+
     wait_for_elasticsearch()
     
     print("Starting pipeline validation...")
@@ -154,13 +167,18 @@ def main():
                 print("[SUCCESS] Simulation result matches expected result.")
                 tests_passed += 1
             else:
-                print("[FAILURE] Simulation result does not match expected result.")
-                print("---------- EXPECTED ----------")
-                print(json.dumps(normalized_expected, indent=2, sort_keys=True))
-                print("----------- ACTUAL -----------")
-                print(json.dumps(normalized_actual, indent=2, sort_keys=True))
-                print("----------------------------")
                 tests_failed += 1
+                print("[FAILURE] Simulation result does not match expected result.")
+                if debug_on_failure:
+                    print(f"::group::Visual Diff for {pipeline_dir}")
+                    json_diff = diff(normalized_expected, normalized_actual, syntax='explicit', dumper=Dumper(colorize=True))
+                    print("--- VISUAL DIFF (Expected -> Actual) ---")
+                    print("'-' denotes elements removed from Expected")
+                    print("'+' denotes elements added in Actual")
+                    print("----------------------------------------")
+                    print(json_diff)
+                    print("----------------------------------------")
+                    print("::endgroup::")
         except Exception as e:
             print(f"[ERROR] An exception occurred during the test: {e}")
             tests_failed += 1

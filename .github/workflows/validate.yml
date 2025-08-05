@@ -12,6 +12,11 @@ on:
         description: 'The single pipeline directory to test (e.g., pipelines/x509_cert)'
         required: true
         type: string
+      enable_visual_diff:
+        description: 'Generate a visual diff in the log'
+        required: true
+        type: boolean
+        default: true
 
 jobs:
   validate:
@@ -67,4 +72,6 @@ jobs:
         env:
           # Use the output from our new "Set test scope" step
           PIPELINES_TO_TEST: "${{ steps.test-scope.outputs.pipelines_to_test }}"
+          DEBUG_ENABLED: "${{ inputs.enable_visual_diff }}"
+          GITHUB_EVENT_NAME: "${{ github.event_name }}"
         run: python3 scripts/validate_pipelines.py
