@@ -1,0 +1,96 @@
+name: Validate Ingest Pipelines
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    
+    services:
+      elasticsearch:
+        image: elasticsearch/elasticsearch:9.1.0 # Use a specific version for consistency
+        ports:
+          - 9200:9200
+        environment:
+          discovery.type: single-node
+          xpack.security.enabled: "false" # Disable security for simplicity in CI
+          ES_JAVA_OPTS: "-Xms512m -Xmx512m" # Keep memory usage low
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Wait for Elasticsearch to start
+        run: |
+          echo "Waiting for Elasticsearch..."
+          timeout 60 bash -c '
+          while ! curl -s "http://localhost:9200" > /dev/null; do
+            echo -n "."
+            sleep 2
+          done
+          echo "Elasticsearch is up!"
+          '
+      
+      - name: Run pipeline validation script
+        run: |
+          #!/bin/bash
+          set -e # Exit immediately if a command exits with a non-zero status.
+          EXIT_CODE=0
+
+          # Find all pipeline directories
+          find pipelines -type d -mindepth 1 -maxdepth 1 | while read dir; do
+            PIPELINE_FILE="$dir/pipeline.json"
+            EXAMPLE_FILE="$dir/simulate_example.json"
+            RESULTS_FILE="$dir/simulate_results.json"
+
+            # Check if all required files exist for a test
+            if [ -f "$PIPELINE_FILE" ] && [ -f "$EXAMPLE_FILE" ] && [ -f "$RESULTS_FILE" ]; then
+              echo "---"
+              echo "[TEST] Testing pipeline in directory: $dir"
+
+              # Prepare the JSON payload for the _simulate API
+              PAYLOAD=$(jq -n --slurpfile pipeline "$PIPELINE_FILE" --slurpfile example "$EXAMPLE_FILE" \
+                '{ "pipeline": $pipeline[0], "docs": $example[0].docs }')
+
+              # Run the _simulate API and capture the actual result
+              # The `jq` command here normalizes the output for comparison:
+              # - It removes the _ingest.timestamp which always changes.
+              # - It sorts all object keys alphabetically (-S) to ensure a stable order.
+              ACTUAL_RESULT=$(curl -s -X POST "http://localhost:9200/_ingest/pipeline/_simulate" \
+                -H "Content-Type: application/json" \
+                --data-binary "$PAYLOAD" | jq -S 'del(.. | .timestamp?)')
+              
+              # Load the expected result, also normalizing it for comparison
+              EXPECTED_RESULT=$(cat "$RESULTS_FILE" | jq -S 'del(.. | .timestamp?)')
+
+              # Compare the actual result with the expected result
+              if [[ "$ACTUAL_RESULT" == "$EXPECTED_RESULT" ]]; then
+                echo "[SUCCESS] Simulation result matches expected result."
+              else
+                echo "[FAILURE] Simulation result does not match expected result."
+                echo "---------- EXPECTED ----------"
+                echo "$EXPECTED_RESULT"
+                echo "----------- ACTUAL -----------"
+                echo "$ACTUAL_RESULT"
+                echo "----------------------------"
+                # Use diff for a clearer failure message
+                diff --unified <(echo "$EXPECTED_RESULT") <(echo "$ACTUAL_RESULT") || true
+                EXIT_CODE=1
+              fi
+            else
+              echo "---"
+              echo "[INFO] Skipping directory $dir (missing required .json files)"
+            fi
+          done
+
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "One or more pipeline tests failed."
+          fi
+          exit $EXIT_CODE
