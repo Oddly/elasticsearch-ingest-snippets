@@ -1,0 +1,51 @@
+# Enhanced GitHub Actions workflow to validate Elasticsearch ingest pipelines
+name: Validate Ingest Pipelines
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    
+    services:
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:9.1.0
+        ports:
+          - 9200:9200
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history to allow for correct diffing against base branch
+          fetch-depth: 0
+
+      - name: Find changed pipeline files
+        id: changed-files
+        uses: tj-actions/changed-files@v44
+        with:
+          files: pipelines/**
+          # We want the output as a space-separated string for the env var
+          output_format: "space_delimited"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Python dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Wait for Elasticsearch and run validation
+        # Pass the space-delimited list of changed files to the script
+        env:
+          CHANGED_FILES: "${{ steps.changed-files.outputs.all_changed_files }}"
+        run: python3 scripts/validate_pipelines.py
