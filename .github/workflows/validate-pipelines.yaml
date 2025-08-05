@@ -258,6 +258,7 @@ jobs:
           
           # Run the Python validation script
           python3 validate_pipelines.py
+      - name: Save the script
         run: |
           cat > validate_pipelines.py << 'PYTHON_SCRIPT_EOF'
           #!/usr/bin/env python3
