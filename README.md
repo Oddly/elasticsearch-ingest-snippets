@@ -17,15 +17,18 @@ An ingest pipeline is a series of processors that run in sequence to modify docu
 
 1. **Find a pipeline**: Browse the `pipelines` directory to find a snippet that matches your needs.
 2. **Create the pipeline in Elasticsearch**: Copy the contents of the `pipeline.json` file. Use the ingest API and optionally dev tools in Kibana to create the pipeline in you cluster.
-Replace `<pipeline_name>` with a unique name.
+Replace `<pipeline_name>` with a pipeline name.
 
     ```bash
     PUT _ingest/pipeline/<pipeline_name>
-    # Paste the contents of pipeline.json here
+    # >> Paste the contents of pipeline.json here <<
     ```
 
-3. **Test the pipeline**: Use the `_simulate` API with the example body from `simulate_example.json` to verify the pipeline works as expected.
-
+3. **Test the pipeline (optional)**: Use the `_simulate` API with the example body from `simulate_example.json` to verify the pipeline works as expected.
+    ```bash
+    POST /_ingest/pipeline/<pipeline_name>/_simulate
+    # >> Paste the contents of the simulate_example.json here <<
+    ```
 4. **Apply the pipeline**: Add the pipeline to the relevant index template or add the `pipeline` query parameter to the indexing requests.
 
 ## Contributing
@@ -34,7 +37,8 @@ Contributions are welcome! Please follow the existing directory structure when a
 
 1. A descriptive directory name.
 2. A `pipeline.json` file containing the pipeline.
-3. A `simulate_example.json` file, containing the body for the `_simulate` input with example logging.
-4. A `README.md` containing a description and an example of an input and output document only containing the fields needed/produced by the pipeline. Also contains all the custom fields (not present in ECS) used in that pipeline.
+3. A `simulate_example.json` file, containing the body for the `_ingest/pipeline/<pipeline_name>/_simulate` input with example logging.
+4. A `simulate_results.json` file, containing the exact results after running the ingest pipeline simulation. This will be used as unit tests.
+5. Last but not least, a `README.md` containing a description and an example of an input and output document only containing the fields needed/produced by the pipeline. Also contains all the custom fields (not present in ECS) used in that pipeline.
 
 See existing pipelines and snippets for examples.
