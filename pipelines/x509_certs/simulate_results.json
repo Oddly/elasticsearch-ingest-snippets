@@ -1,0 +1,44 @@
+{
+  "docs": [
+    {
+      "doc": {
+        "_index": "_index",
+        "_version": "-3",
+        "_id": "_id",
+        "_source": {
+          "tls": {
+            "client": {
+              "x509": {
+                "subject": {
+                  "country": [
+                    "US"
+                  ],
+                  "state_or_province": [
+                    "California"
+                  ],
+                  "email_address": [
+                    "prod.user@example.com"
+                  ],
+                  "organization": [
+                    "Example Corp"
+                  ],
+                  "distinguished_name": "CN=prod.user,OU=Application Support,OU=IT Department,O=Example Corp,C=US,emailAddress=prod.user@example.com,ST=California",
+                  "common_name": [
+                    "prod.user"
+                  ],
+                  "organizational_unit": [
+                    "Application Support",
+                    "IT Department"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "_ingest": {
+          "timestamp": "2025-08-05T21:12:50.613791629Z"
+        }
+      }
+    }
+  ]
+}

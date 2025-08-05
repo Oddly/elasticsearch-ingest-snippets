@@ -1,0 +1,17 @@
+{
+  "docs": [
+    {
+      "_source": {
+        "tls": {
+          "client": {
+            "x509": {
+              "subject": {
+                "distinguished_name": "CN=prod.user,OU=Application Support,OU=IT Department,O=Example Corp,C=US,emailAddress=prod.user@example.com,ST=California"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

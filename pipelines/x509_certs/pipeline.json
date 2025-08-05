@@ -1,0 +1,141 @@
+{
+  "description": "Parses an X.509 client subject distinguished name into its ECS subject fields, handling multiple values for components like OU.",
+  "processors": [
+    {
+      "script": {
+        "lang": "painless",
+        "tag": "parse_multiple_dn_components",
+        "source": """
+          // Exit early if the distinguished_name field doesn't exist
+          if (ctx.tls?.client?.x509?.subject?.distinguished_name == null) {
+            return;
+          }
+
+          def dn = ctx.tls.client.x509.subject.distinguished_name;
+          def components = new HashMap();
+
+          // Split the DN on commas and process each key=value pair
+          for (def part : dn.splitOnToken(',')) {
+            def trimmed = part.trim();
+            def keyValue = trimmed.splitOnToken('=');
+            
+            if (keyValue.length == 2) {
+              def key = keyValue[0].trim();
+              def value = keyValue[1].trim();
+              
+              if (!components.containsKey(key)) {
+                components[key] = new ArrayList();
+              }
+              components[key].add(value);
+            }
+          }
+          ctx._parsed_dn = components;
+        """,
+        "on_failure": [
+          {
+            "set": {
+              "field": "event.kind",
+              "value": "pipeline_error"
+            }
+          },
+          {
+            "append": {
+              "field": "error.message",
+              "value": "Processor 'script' with tag 'parse_multiple_dn_components' in pipeline failed with message '{{_ingest.on_failure_message}}'"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "set": {
+        "if": "ctx._parsed_dn?.CN != null",
+        "field": "tls.client.x509.subject.common_name",
+        "copy_from": "_parsed_dn.CN"
+      }
+    },
+    {
+      "set": {
+        "if": "ctx._parsed_dn?.C != null",
+        "field": "tls.client.x509.subject.country",
+        "copy_from": "_parsed_dn.C"
+      }
+    },
+    {
+      "set": {
+        "if": "ctx._parsed_dn?.O != null",
+        "field": "tls.client.x509.subject.organization",
+        "copy_from": "_parsed_dn.O"
+      }
+    },
+    {
+      "set": {
+        "if": "ctx._parsed_dn?.OU != null",
+        "field": "tls.client.x509.subject.organizational_unit",
+        "copy_from": "_parsed_dn.OU"
+      }
+    },
+    {
+      "set": {
+        "if": "ctx._parsed_dn?.L != null",
+        "field": "tls.client.x509.subject.locality",
+        "copy_from": "_parsed_dn.L"
+      }
+    },
+    {
+      "script": {
+        "lang": "painless",
+        "tag": "combine_state_fields",
+        "source": """
+          def states = new ArrayList();
+          if (ctx._parsed_dn?.ST != null) states.addAll(ctx._parsed_dn.ST);
+          if (ctx._parsed_dn?.S != null) states.addAll(ctx._parsed_dn.S);
+          if (ctx._parsed_dn?.P != null) states.addAll(ctx._parsed_dn.P);
+          
+          if (!states.isEmpty()) {
+            ctx._combined_states = states;
+          }
+        """
+      }
+    },
+    {
+      "set": {
+        "if": "ctx._combined_states != null",
+        "field": "tls.client.x509.subject.state_or_province",
+        "copy_from": "_combined_states"
+      }
+    },
+    {
+      "set": {
+        "if": "ctx._parsed_dn?.serialNumber != null && !ctx._parsed_dn.serialNumber.isEmpty()",
+        "field": "tls.client.x509.serial_number",
+        "value": "{{_parsed_dn.serialNumber.0}}"
+      }
+    },
+    {
+      "script": {
+        "lang": "painless",
+        "tag": "combine_email_fields",
+        "source": """
+          def emails = new ArrayList();
+          if (ctx._parsed_dn?.emailAddress != null) emails.addAll(ctx._parsed_dn.emailAddress);
+          if (ctx._parsed_dn?.E != null) emails.addAll(ctx._parsed_dn.E);
+
+          if (!emails.isEmpty()) {
+            ctx.tls.client.x509.subject.email_address = emails;
+          }
+        """
+      }
+    },
+    {
+      "remove": {
+        "field": [
+          "_parsed_dn",
+          "_combined_states"
+        ],
+        "ignore_missing": true,
+        "tag": "cleanup_temp_fields"
+      }
+    }
+  ]
+}
