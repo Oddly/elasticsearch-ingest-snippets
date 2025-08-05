@@ -37,7 +37,6 @@ jobs:
           done
           echo "Elasticsearch is up!"
           '
-            - name: Run pipeline validation script
       - name: Start the validation script
         run: |
           #!/bin/bash
