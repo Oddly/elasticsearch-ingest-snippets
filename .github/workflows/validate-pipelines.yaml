@@ -55,14 +55,18 @@ jobs:
               echo "---"
               echo "[TEST] Testing pipeline in directory: $dir"
 
-              # Prepare the JSON payload for the _simulate API
-              PAYLOAD=$(jq -n --slurpfile pipeline "$PIPELINE_FILE" --slurpfile example "$EXAMPLE_FILE" \
-                '{ "pipeline": $pipeline[0], "docs": $example[0].docs }')
+              # --- MODIFIED PAYLOAD PREPARATION ---
+              # 1. Read the pipeline file (with multi-line strings) as raw text.
+              PIPELINE_CONTENT=$(cat "$PIPELINE_FILE")
+
+              # 2. Use jq to extract ONLY the '.docs' array from the example file.
+              DOCS_CONTENT=$(jq '.docs' "$EXAMPLE_FILE")
+
+              # 3. Use printf to build the final JSON payload. This avoids jq parsing the pipeline file.
+              PAYLOAD=$(printf '{"pipeline": %s, "docs": %s}' "$PIPELINE_CONTENT" "$DOCS_CONTENT")
+              # --- END MODIFICATION ---
 
               # Run the _simulate API and capture the actual result
-              # The `jq` command here normalizes the output for comparison:
-              # - It removes the _ingest.timestamp which always changes.
-              # - It sorts all object keys alphabetically (-S) to ensure a stable order.
               ACTUAL_RESULT=$(curl -s -X POST "http://localhost:9200/_ingest/pipeline/_simulate" \
                 -H "Content-Type: application/json" \
                 --data-binary "$PAYLOAD" | jq -S 'del(.. | .timestamp?)')
@@ -80,7 +84,6 @@ jobs:
                 echo "----------- ACTUAL -----------"
                 echo "$ACTUAL_RESULT"
                 echo "----------------------------"
-                # Use diff for a clearer failure message
                 diff --unified <(echo "$EXPECTED_RESULT") <(echo "$ACTUAL_RESULT") || true
                 EXIT_CODE=1
               fi
