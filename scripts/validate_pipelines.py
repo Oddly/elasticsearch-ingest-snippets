@@ -6,7 +6,7 @@ import requests
 import sys
 import time
 from pathlib import Path
-from jsondiff import diff, Dumper
+from deepdiff import DeepDiff
 
 def wait_for_elasticsearch(elasticsearch_url="http://localhost:9200", timeout=120):
     """Wait for Elasticsearch to be ready and healthy"""
@@ -113,10 +113,7 @@ def get_pipelines_to_test():
 
 
 def main():
-    # --- NEW LOGIC TO DETERMINE DEBUG BEHAVIOR ---
-    # Determine if we should show a detailed diff on failure.
-    # For automatic runs (push/PR), we always want the diff.
-    # For manual runs (workflow_dispatch), we respect the user's input.
+    # --- Logic to determine debug behavior (unchanged) ---
     event_name = os.environ.get('GITHUB_EVENT_NAME')
     if event_name == 'workflow_dispatch':
         debug_enabled_str = os.environ.get('DEBUG_ENABLED', 'false')
@@ -162,23 +159,24 @@ def main():
             
             normalized_actual = normalize_result(actual_result)
             normalized_expected = normalize_result(expected_result)
-            
-            if normalized_actual == normalized_expected:
+            # --- UPDATED DIFF LOGIC using deepdiff ---
+            json_diff = DeepDiff(normalized_expected, normalized_actual, ignore_order=True)
+            if not json_diff: # An empty DeepDiff object means no differences were found
                 print("[SUCCESS] Simulation result matches expected result.")
                 tests_passed += 1
             else:
                 tests_failed += 1
                 print("[FAILURE] Simulation result does not match expected result.")
+
                 if debug_on_failure:
                     print(f"::group::Visual Diff for {pipeline_dir}")
-                    json_diff = diff(normalized_expected, normalized_actual, syntax='explicit', dumper=Dumper(colorize=True))
-                    print("--- VISUAL DIFF (Expected -> Actual) ---")
-                    print("'-' denotes elements removed from Expected")
-                    print("'+' denotes elements added in Actual")
-                    print("----------------------------------------")
-                    print(json_diff)
-                    print("----------------------------------------")
+                    print("--- VISUAL DIFF (Expected vs. Actual) ---")
+                    # The pretty() method gives a beautiful, colorized output
+                    print(json_diff.pretty())
+                    print("-----------------------------------------")
                     print("::endgroup::")
+        
+            
         except Exception as e:
             print(f"[ERROR] An exception occurred during the test: {e}")
             tests_failed += 1

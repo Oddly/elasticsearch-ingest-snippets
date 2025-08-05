@@ -1,2 +1,2 @@
-jsondiff
+deepdiff
 requests
