@@ -34,7 +34,7 @@ jobs:
         with:
           files: pipelines/**
           # We want the output as a space-separated string for the env var
-        separator: " "
+          separator: " "
 
       - name: Set up Python
         uses: actions/setup-python@v5
