@@ -37,15 +37,15 @@ jobs:
           done
           echo "Elasticsearch is up!"
           '
-      
-      - name: Run pipeline validation script
+            - name: Run pipeline validation script
         run: |
           #!/bin/bash
-          set -e # Exit immediately if a command exits with a non-zero status.
+          # Using `set -eo pipefail` is a robust way to handle errors in scripts.
+          set -eo pipefail
           EXIT_CODE=0
 
-          # Find all pipeline directories
-          find pipelines -type d -mindepth 1 -maxdepth 1 | while read dir; do
+          # Use process substitution to avoid a subshell, ensuring EXIT_CODE is correctly propagated.
+          while read -r dir; do
             PIPELINE_FILE="$dir/pipeline.json"
             EXAMPLE_FILE="$dir/simulate_example.json"
             RESULTS_FILE="$dir/simulate_results.json"
@@ -55,24 +55,26 @@ jobs:
               echo "---"
               echo "[TEST] Testing pipeline in directory: $dir"
 
-              # --- MODIFIED PAYLOAD PREPARATION ---
-              # 1. Read the pipeline file (with multi-line strings) as raw text.
-              PIPELINE_CONTENT=$(cat "$PIPELINE_FILE")
-
-              # 2. Use jq to extract ONLY the '.docs' array from the example file.
-              DOCS_CONTENT=$(jq '.docs' "$EXAMPLE_FILE")
-
-              # 3. Use printf to build the final JSON payload. This avoids jq parsing the pipeline file.
-              PAYLOAD=$(printf '{"pipeline": %s, "docs": %s}' "$PIPELINE_CONTENT" "$DOCS_CONTENT")
-              # --- END MODIFICATION ---
+              # --- 'Here Document' PAYLOAD PREPARATION ---
+              # This is the cleanest way to build the final JSON from multiple files
+              # without performing risky string manipulation or escaping.
+              PAYLOAD=$(cat <<EOF
+              {
+                "pipeline": $(cat "$PIPELINE_FILE"),
+                "docs": $(jq '.docs' "$EXAMPLE_FILE")
+              }
+              EOF
+              )
+              # --- END PREPARATION ---
 
               # Run the _simulate API and capture the actual result
+              # The API response is piped directly into jq for normalization.
               ACTUAL_RESULT=$(curl -s -X POST "http://localhost:9200/_ingest/pipeline/_simulate" \
                 -H "Content-Type: application/json" \
                 --data-binary "$PAYLOAD" | jq -S 'del(.. | .timestamp?)')
               
               # Load the expected result, also normalizing it for comparison
-              EXPECTED_RESULT=$(cat "$RESULTS_FILE" | jq -S 'del(.. | .timestamp?)')
+              EXPECTED_RESULT=$(jq -S 'del(.. | .timestamp?)' "$RESULTS_FILE")
 
               # Compare the actual result with the expected result
               if [[ "$ACTUAL_RESULT" == "$EXPECTED_RESULT" ]]; then
@@ -91,7 +93,7 @@ jobs:
               echo "---"
               echo "[INFO] Skipping directory $dir (missing required .json files)"
             fi
-          done
+          done < <(find pipelines -type d -mindepth 1 -maxdepth 1)
 
           if [ $EXIT_CODE -ne 0 ]; then
             echo "One or more pipeline tests failed."
