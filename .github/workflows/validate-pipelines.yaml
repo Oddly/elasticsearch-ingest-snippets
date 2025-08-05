@@ -38,6 +38,7 @@ jobs:
           echo "Elasticsearch is up!"
           '
             - name: Run pipeline validation script
+      - name: Start the validation script
         run: |
           #!/bin/bash
           # Using `set -eo pipefail` is a robust way to handle errors in scripts.
