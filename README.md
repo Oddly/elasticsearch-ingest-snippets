@@ -6,10 +6,10 @@ An ingest pipeline is a series of processors that run in sequence to modify docu
 
 ## Available pipelines
 
-|Use Case|Description|
-|--------|-----------|
-| ms to ns conversion | Converts miliseconds to nanoseconds |
-| X.509 certificate parsing | Parses a X.509 distinguished name (DN) into ECS fields | 
+|Name|Use Case|Description|
+|----|--------|-----------|
+|ms_to_ns| ms to ns conversion | Converts miliseconds to nanoseconds |
+|x509_certs| X.509 certificate parsing | Parses a X.509 distinguished name (DN) into ECS fields | 
 
 
 
@@ -35,6 +35,6 @@ Contributions are welcome! Please follow the existing directory structure when a
 1. A descriptive directory name.
 2. A `pipeline.json` file containing the pipeline.
 3. A `simulate_example.json` file, containing the body for the `_simulate` input with example logging.
-4. A `README.md` containing a description, and an example of an input and output document only containing the fields needed/produced by the pipeline.
+4. A `README.md` containing a description and an example of an input and output document only containing the fields needed/produced by the pipeline. Also contains all the custom fields (not present in ECS) used in that pipeline.
 
 See existing pipelines and snippets for examples.
