@@ -1,4 +1,4 @@
-# GitHub Actions workflow to validate Elasticsearch ingest pipelines
+# Enhanced GitHub Actions workflow to validate Elasticsearch ingest pipelines
 name: Validate Ingest Pipelines
 
 on:
@@ -25,7 +25,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # Fetch all history to allow correct diff between PR base and head
+          # Fetch more history for better diff detection
           fetch-depth: 0
 
       - name: Install jq
@@ -39,7 +39,7 @@ jobs:
             echo -n "."
             sleep 2
           done
-          echo "Elasticsearch is responding."
+          echo "Elasticsearch is responding!"
           '
 
       - name: Wait for Elasticsearch cluster health
@@ -50,9 +50,9 @@ jobs:
             echo -n "."
             sleep 2
           done
-          echo "Elasticsearch cluster is healthy."
+          echo "Elasticsearch cluster is healthy!"
           '
-          # Show final cluster status for debugging
+          # Show final cluster status
           curl -s "http://localhost:9200/_cluster/health" | jq '.'
 
       - name: Determine pipelines to test
@@ -61,14 +61,15 @@ jobs:
           set -eo pipefail
           
           if [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo "Detecting changed pipelines in Pull Request..."
+            echo "🔍 Detecting changed pipelines in PR..."
             
+            # Get the base branch commit
             BASE_SHA="${{ github.event.pull_request.base.sha }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
             
-            echo "Comparing commits $BASE_SHA..$HEAD_SHA"
+            echo "Comparing $BASE_SHA..$HEAD_SHA"
             
-            # Find all changed files within the pipelines directory
+            # Find all changed files in pipelines directory
             CHANGED_FILES=$(git diff --name-only "$BASE_SHA..$HEAD_SHA" -- pipelines/ || echo "")
             
             if [ -z "$CHANGED_FILES" ]; then
@@ -81,7 +82,7 @@ jobs:
             echo "Changed files:"
             echo "$CHANGED_FILES"
             
-            # Extract unique parent directories (e.g., pipelines/my-pipeline) from changed files
+            # Extract unique pipeline directories from changed files
             PIPELINE_DIRS=$(echo "$CHANGED_FILES" | grep "^pipelines/" | cut -d'/' -f1,2 | sort -u || echo "")
             
             if [ -z "$PIPELINE_DIRS" ]; then
@@ -91,7 +92,7 @@ jobs:
               exit 0
             fi
             
-            # Convert the list of directories to a space-separated string for output
+            # Convert to space-separated list and count
             PIPELINES_LIST=$(echo "$PIPELINE_DIRS" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
             PIPELINE_COUNT=$(echo "$PIPELINE_DIRS" | wc -l)
             
@@ -104,7 +105,8 @@ jobs:
             echo "test_count=$PIPELINE_COUNT" >> $GITHUB_OUTPUT
             
           else
-            echo "Running on main branch - testing all pipelines..."
+            echo "🔍 Running on main branch - testing all pipelines..."
+            # On main branch (push), test all pipelines
             ALL_PIPELINES=$(find pipelines -type d -mindepth 1 -maxdepth 1 | tr '\n' ' ' | sed 's/[[:space:]]*$//' || echo "")
             PIPELINE_COUNT=$(find pipelines -type d -mindepth 1 -maxdepth 1 | wc -l || echo "0")
             
@@ -123,11 +125,11 @@ jobs:
           TEST_COUNT="${{ steps.changed-pipelines.outputs.test_count }}"
           
           if [ "$TEST_COUNT" -eq 0 ]; then
-            echo "No pipelines to test - skipping validation."
+            echo "✅ No pipelines to test - skipping validation."
             exit 0
           fi
           
-          echo "Testing $TEST_COUNT pipeline(s)..."
+          echo "🧪 Testing $TEST_COUNT pipeline(s)..."
           echo ""
           
           EXIT_CODE=0
@@ -135,12 +137,8 @@ jobs:
           TESTS_PASSED=0
           TESTS_FAILED=0
 
-          # FIX: Read the space-separated string into a bash array to correctly handle
-          # directory names that might contain spaces or special characters.
-          read -r -a PIPELINE_ARRAY <<< "$PIPELINES_TO_TEST"
-
-          # Loop through the array using the robust, quoted syntax.
-          for dir in "${PIPELINE_ARRAY[@]}"; do
+          # Convert space-separated list back to array
+          for dir in $PIPELINES_TO_TEST; do
             PIPELINE_FILE="$dir/pipeline.json"
             EXAMPLE_FILE="$dir/simulate_example.json"
             RESULTS_FILE="$dir/simulate_results.json"
@@ -148,54 +146,59 @@ jobs:
             # Check if all required files exist for a test
             if [ -f "$PIPELINE_FILE" ] && [ -f "$EXAMPLE_FILE" ] && [ -f "$RESULTS_FILE" ]; then
               echo "---"
-              echo "[TEST] Testing pipeline in directory: $dir"
+              echo "🧪 [TEST] Testing pipeline in directory: $dir"
               TESTS_RUN=$((TESTS_RUN + 1))
 
-              PAYLOAD=$(cat <<EOF
+              # Build JSON payload using here document
+              PAYLOAD=$(cat <<-EOF
               {
                 "pipeline": $(cat "$PIPELINE_FILE"),
                 "docs": $(jq '.docs' "$EXAMPLE_FILE")
               }
-              EOF
+EOF
               )
-              
+
+              # Run the _simulate API and normalize the response
               ACTUAL_RESULT=$(curl -s -X POST "http://localhost:9200/_ingest/pipeline/_simulate" \
                 -H "Content-Type: application/json" \
                 --data-binary "$PAYLOAD" | jq -S 'del(.. | .timestamp?)')
               
+              # Load and normalize the expected result
               EXPECTED_RESULT=$(jq -S 'del(.. | .timestamp?)' "$RESULTS_FILE")
 
+              # Compare results
               if [[ "$ACTUAL_RESULT" == "$EXPECTED_RESULT" ]]; then
-                echo "[SUCCESS] Simulation result matches expected result."
+                echo "✅ [SUCCESS] Simulation result matches expected result."
                 TESTS_PASSED=$((TESTS_PASSED + 1))
               else
-                echo "[FAILURE] Simulation result does not match expected result."
+                echo "❌ [FAILURE] Simulation result does not match expected result."
                 echo "---------- EXPECTED ----------"
                 echo "$EXPECTED_RESULT"
                 echo "----------- ACTUAL -----------"
                 echo "$ACTUAL_RESULT"
                 echo "----------------------------"
+                # Show diff for debugging
                 diff --unified <(echo "$EXPECTED_RESULT") <(echo "$ACTUAL_RESULT") || true
                 EXIT_CODE=1
                 TESTS_FAILED=$((TESTS_FAILED + 1))
               fi
             else
               echo "---"
-              echo "[INFO] Skipping directory $dir (missing required .json files for a test)"
+              echo "ℹ️  [INFO] Skipping directory $dir (missing required .json files for a test)"
             fi
           done
 
           echo ""
-          echo "Test Summary:"
+          echo "📊 Test Summary:"
           echo "   Tests run: $TESTS_RUN"
           echo "   Passed: $TESTS_PASSED"
           echo "   Failed: $TESTS_FAILED"
           echo ""
 
           if [ $EXIT_CODE -ne 0 ]; then
-            echo "One or more pipeline tests failed."
+            echo "❌ One or more pipeline tests failed."
           else
-            echo "All pipeline tests passed."
+            echo "✅ All pipeline tests passed!"
           fi
           
           exit $EXIT_CODE
