@@ -119,10 +119,10 @@ def main():
     event_name = os.environ.get('GITHUB_EVENT_NAME')
     if event_name == 'workflow_dispatch':
         debug_enabled_str = os.environ.get('DEBUG_ENABLED', 'false')
-        debug_on_failure = debug_enabled_str.lower() == 'true'
-        print(f"Manual run detected. Visual diff on failure: {'Enabled' if debug_on_failure else 'Disabled'}")
+        debug_on = debug_enabled_str.lower() == 'true'
+        print(f"Manual run detected. Visual diff: {'Enabled' if debug_on else 'Disabled'}")
     else:
-        debug_on_failure = True # Always enable for automated CI runs
+        debug_on = True # Always enable for automated CI runs
 
     wait_for_elasticsearch()
     
@@ -165,16 +165,20 @@ def main():
             if not json_diff:
                 print("[SUCCESS] Simulation result matches expected result.")
                 tests_passed += 1
-            else:
-                tests_failed += 1
-                print("[FAILURE] Simulation result does not match expected result.")
-
-                if debug_on_failure:
+                if debug_on:
                     print(f"::group::Visual Diff for {pipeline_dir}")
                     print("--- VISUAL DIFF (Expected vs. Actual) ---")
                     print(json_diff.pretty())
                     print("-----------------------------------------")
                     print("::endgroup::")
+            else:
+                tests_failed += 1
+                print("[FAILURE] Simulation result does not match expected result.")
+                print(f"::group::Visual Diff for {pipeline_dir}")
+                print("--- VISUAL DIFF (Expected vs. Actual) ---")
+                print(json_diff.pretty())
+                print("-----------------------------------------")
+                print("::endgroup::")
         
         except Exception as e:
             print(f"[ERROR] An exception occurred during the test: {e}")

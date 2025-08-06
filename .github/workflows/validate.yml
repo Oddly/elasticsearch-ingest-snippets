@@ -9,9 +9,10 @@ on:
   workflow_dispatch:
     inputs:
       pipeline_directory:
-        description: 'The single pipeline directory to test (e.g., pipelines/x509_cert)'
+        description: 'The single pipeline directory to test (e.g., pipelines/x509_certs)'
         required: true
         type: string
+        default: pipelines/x509_certs
       enable_visual_diff:
         description: 'Generate a visual diff in the log'
         required: true
