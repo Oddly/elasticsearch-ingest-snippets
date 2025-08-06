@@ -111,6 +111,8 @@ def get_pipelines_to_test():
     # The string is already a space-separated list of directories
     return pipelines_str.split()
 
+# ... (imports and all functions before main() are unchanged) ...
+from deepdiff import DeepDiff
 
 def main():
     # --- Logic to determine debug behavior (unchanged) ---
@@ -125,12 +127,11 @@ def main():
     wait_for_elasticsearch()
     
     print("Starting pipeline validation...")
-    
     pipelines = get_pipelines_to_test()
     if not pipelines:
         return 0
     
-    print(f"Found {len(pipelines)} changed pipeline director(y/ies) to test...")
+    print(f"Found {len(pipelines)} pipeline director(y/ies) to test...")
     print()
     
     tests_run = 0
@@ -144,7 +145,8 @@ def main():
         results_file = pipeline_path / "simulate_results.json"
         
         if not all(f.exists() for f in [pipeline_file, example_file, results_file]):
-            print("---\n[INFO] Skipping directory {pipeline_dir} (missing required .json files)")
+            # --- THIS IS THE CORRECTED LINE ---
+            print(f"---\n[INFO] Skipping directory {pipeline_dir} (missing required .json files)")
             continue
         
         print(f"---\n[TEST] Testing pipeline in directory: {pipeline_dir}")
@@ -154,14 +156,13 @@ def main():
             pipeline_data = load_and_fix_pipeline(pipeline_file)
             example_data = load_json_file(example_file)
             expected_result = load_json_file(results_file)
-            
             actual_result = simulate_pipeline(pipeline_data, example_data['docs'])
-            
             normalized_actual = normalize_result(actual_result)
             normalized_expected = normalize_result(expected_result)
-            # --- UPDATED DIFF LOGIC using deepdiff ---
+             
             json_diff = DeepDiff(normalized_expected, normalized_actual, ignore_order=True)
-            if not json_diff: # An empty DeepDiff object means no differences were found
+            
+            if not json_diff:
                 print("[SUCCESS] Simulation result matches expected result.")
                 tests_passed += 1
             else:
@@ -171,16 +172,15 @@ def main():
                 if debug_on_failure:
                     print(f"::group::Visual Diff for {pipeline_dir}")
                     print("--- VISUAL DIFF (Expected vs. Actual) ---")
-                    # The pretty() method gives a beautiful, colorized output
                     print(json_diff.pretty())
                     print("-----------------------------------------")
                     print("::endgroup::")
         
-            
         except Exception as e:
             print(f"[ERROR] An exception occurred during the test: {e}")
             tests_failed += 1
     
+    # ... (summary reporting is unchanged) ...
     print("\n--- Test Summary ---")
     print(f"Tests run:    {tests_run}")
     print(f"Passed:     {tests_passed}")
