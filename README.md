@@ -9,7 +9,7 @@ An ingest pipeline is a series of processors that run in sequence to modify docu
 |Name|Use Case|Description|
 |----|--------|-----------|
 |ms_to_ns| ms to ns conversion | Converts miliseconds to nanoseconds |
-|x509_certs| X.509 certificate parsing | Parses a X.509 distinguished name (DN) into ECS fields | 
+|x509_client_certificates| X.509 client certificate parsing | Parses a X.509 client distinguished name (DN) into ECS fields | 
 
 
 
