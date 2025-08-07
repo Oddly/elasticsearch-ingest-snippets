@@ -38,7 +38,7 @@
 
           for (String field : params.source_fields) {
             def value = ctx;
-            String[] parts = field.split('\\\\.');
+            String[] parts = field.splitOnToken('.');
             boolean exists = true;
             
             for (String part : parts) {

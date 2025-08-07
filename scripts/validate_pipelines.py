@@ -8,14 +8,15 @@ import time
 from pathlib import Path
 from deepdiff import DeepDiff
 
-def wait_for_elasticsearch(elasticsearch_url="http://localhost:9200", timeout=120):
+def wait_for_elasticsearch(request_kwargs, elasticsearch_url="http://localhost:9200", timeout=120):
     """Wait for Elasticsearch to be ready and healthy"""
     print("Waiting for Elasticsearch to start...")
+
     start_time = time.time()
     while time.time() - start_time < timeout:
         try:
-            response = requests.get(elasticsearch_url, timeout=5)
-            if response.status_code == 200:
+            response = requests.get(elasticsearch_url, **request_kwargs)
+            if response.status_code in [200, 401]:
                 print("Elasticsearch is responding!")
                 break
         except requests.exceptions.RequestException:
@@ -31,7 +32,7 @@ def wait_for_elasticsearch(elasticsearch_url="http://localhost:9200", timeout=12
         try:
             health_response = requests.get(
                 f"{elasticsearch_url}/_cluster/health?wait_for_status=yellow&timeout=10s",
-                timeout=15
+                **request_kwargs
             )
             if health_response.status_code == 200:
                 health_data = health_response.json()
@@ -81,20 +82,33 @@ def normalize_result(result):
         return [normalize_result(item) for item in result]
     return result
 
-def simulate_pipeline(pipeline_data, docs_data, elasticsearch_url="http://localhost:9200"):
+def simulate_pipeline(request_kwargs, pipeline_data, docs_data, elasticsearch_url="http://localhost:9200"):
     """Send pipeline simulation request to Elasticsearch"""
     payload = {"pipeline": pipeline_data, **docs_data}
+
     try:
         response = requests.post(
             f"{elasticsearch_url}/_ingest/pipeline/_simulate",
             json=payload,
             headers={"Content-Type": "application/json"},
-            timeout=30
+            **request_kwargs
         )
         response.raise_for_status()
         return response.json()
+
+    except requests.exceptions.HTTPError as e:
+        print("Elasticsearch returned an HTTP error")
+
+        try:
+            error_details = e.response.json()
+            print(json.dumps(error_details, indent=2))
+        except json.JSONDecodeError:
+            print(f"Raw error response: {e.resonse.text}")
+
+        raise Exception(f"Elasticsearch simulation failed with status code {e.response.status_code}")
+
     except Exception as e:
-        raise Exception(f"Elasticsearch simulation failed: {e}")
+        raise Exception(f"An unexpected error occurred during simulation: {e}")
 
 def get_pipelines_to_test():
     """
@@ -104,18 +118,27 @@ def get_pipelines_to_test():
     """
     pipelines_str = os.environ.get('PIPELINES_TO_TEST', '').strip()
 
+
     if not pipelines_str:
         print("No pipelines to test. Skipping validation.")
         return []
 
-    # The string is already a space-separated list of directories
     return pipelines_str.split()
 
-# ... (imports and all functions before main() are unchanged) ...
 from deepdiff import DeepDiff
 
 def main():
-    # --- Logic to determine debug behavior (unchanged) ---
+    es_user = os.getenv("ES_USER", "elastic")
+    es_password = os.getenv("ES_PASSWORD")
+    request_kwargs = {
+            "timeout": 10
+    }
+
+    if not es_password:
+        print("Warning: ES_PASSWORD not set, trying unauthenticated request.")
+        auth_params = None
+    else:
+        request_kwargs['auth'] = (es_user, es_password)
     event_name = os.environ.get('GITHUB_EVENT_NAME')
     if event_name == 'workflow_dispatch':
         debug_enabled_str = os.environ.get('DEBUG_ENABLED', 'false')
@@ -123,8 +146,9 @@ def main():
         print(f"Manual run detected. Visual diff: {'Enabled' if debug_on else 'Disabled'}")
     else:
         debug_on = True # Always enable for automated CI runs
+    debug_on = True
 
-    wait_for_elasticsearch()
+    wait_for_elasticsearch(request_kwargs=request_kwargs)
     
     print("Starting pipeline validation...")
     pipelines = get_pipelines_to_test()
@@ -138,14 +162,19 @@ def main():
     tests_passed = 0
     tests_failed = 0
     
+
     for pipeline_dir in pipelines:
-        pipeline_path = Path(pipeline_dir)
+        # If locally running, add ../ to path
+        if not os.getenv('GITHUB_ACTIONS'):
+            script_dir = Path(__file__).resolve().parent
+            pipeline_path = script_dir.parent / "pipelines" / pipeline_dir
+        else:
+            pipeline_path = Path(pipeline_dir)
         pipeline_file = pipeline_path / "pipeline.json"
         example_file = pipeline_path / "simulate_example.json"
         results_file = pipeline_path / "simulate_results.json"
         
         if not all(f.exists() for f in [pipeline_file, example_file, results_file]):
-            # --- THIS IS THE CORRECTED LINE ---
             print(f"---\n[INFO] Skipping directory {pipeline_dir} (missing required .json files)")
             continue
         
@@ -156,9 +185,10 @@ def main():
             pipeline_data = load_and_fix_pipeline(pipeline_file)
             example_data = load_json_file(example_file)
             expected_result = load_json_file(results_file)
-            actual_result = simulate_pipeline(pipeline_data, example_data['docs'])
+            actual_result = simulate_pipeline(request_kwargs, pipeline_data, example_data)
             normalized_actual = normalize_result(actual_result)
             normalized_expected = normalize_result(expected_result)
+
              
             json_diff = DeepDiff(normalized_expected, normalized_actual, ignore_order=True)
             
@@ -184,7 +214,6 @@ def main():
             print(f"[ERROR] An exception occurred during the test: {e}")
             tests_failed += 1
     
-    # ... (summary reporting is unchanged) ...
     print("\n--- Test Summary ---")
     print(f"Tests run:    {tests_run}")
     print(f"Passed:     {tests_passed}")
