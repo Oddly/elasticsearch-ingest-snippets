@@ -1,0 +1,58 @@
+{
+  "docs": [
+    {
+      "_source": {
+        "host": {
+          "name": "web-server-01",
+          "hostname": "web-server-01.internal.example.com"
+        },
+        "source": {
+          "domain": "client.example.com"
+        },
+        "destination": {
+          "domain": "api.example.com"
+        },
+        "client": {
+          "domain": "mobile.example.com"
+        },
+        "server": {
+          "domain": "backend.example.com"
+        },
+        "url": {
+          "domain": "www.example.com",
+          "registered_domain": "example.com"
+        },
+        "dns": {
+          "question": {
+            "name": "service.example.com"
+          },
+          "answers": {
+            "name": "service-alias.example.com"
+          }
+        },
+        "tls": {
+          "client": {
+            "server_name": "secure.example.com",
+            "subject": {
+              "common_name": "client-cert.example.com"
+            }
+          },
+          "server": {
+            "subject": {
+              "common_name": "*.example.com"
+            }
+          }
+        },
+        "x509": {
+          "subject": {
+            "common_name": "certificate.example.com"
+          },
+          "issuer": {
+            "common_name": "ca.example.com"
+          }
+        }
+      }
+    }
+  ]
+}
+

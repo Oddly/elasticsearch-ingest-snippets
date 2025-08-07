@@ -1,0 +1,75 @@
+{
+  "description": "Build related.hosts field from ECS host/domain fields",
+  "processors": [
+    {
+      "script": {
+        "tag": "build_related_hosts",
+        "lang": "painless",
+        "params": {
+          "target_field": "related.hosts",
+          "source_fields": [
+            "host.name",
+            "host.hostname",
+            "source.domain",
+            "destination.domain",
+            "client.domain",
+            "server.domain",
+            "url.domain",
+            "url.registered_domain",
+            "dns.question.name",
+            "dns.answers.name",
+            "tls.client.server_name",
+            "tls.server.subject.common_name",
+            "tls.client.subject.common_name",
+            "x509.subject.common_name",
+            "x509.issuer.common_name"
+          ]
+        },
+        "source": """
+          if (ctx.related == null) {
+            ctx.related = new HashMap();
+          }
+
+          String targetFieldName = params.target_field.substring(params.target_field.lastIndexOf('.') + 1);
+
+          if (ctx.related[targetFieldName] == null) {
+            ctx.related[targetFieldName] = new ArrayList();
+          }
+
+          for (String field : params.source_fields) {
+            def value = ctx;
+            String[] parts = field.split('\\\\.');
+            boolean exists = true;
+            
+            for (String part : parts) {
+              if (value != null && value instanceof Map && value.containsKey(part)) {
+                value = value[part];
+              } else {
+                exists = false;
+                break;
+              }
+            }
+            
+            if (exists && value != null && value != '' && !ctx.related[targetFieldName].contains(value)) {
+              ctx.related[targetFieldName].add(value);
+            }
+          }
+        """,
+        "on_failure": [
+          {
+            "set": {
+              "field": "event.kind",
+              "value": "pipeline_error"
+            }
+          },
+          {
+            "append": {
+              "field": "error.message",
+              "value": "Processor 'script' with tag 'parse_multiple_dn_components' in pipeline failed with message '{{_ingest.on_failure_message}}'"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
