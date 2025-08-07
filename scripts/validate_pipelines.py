@@ -83,7 +83,7 @@ def normalize_result(result):
 
 def simulate_pipeline(pipeline_data, docs_data, elasticsearch_url="http://localhost:9200"):
     """Send pipeline simulation request to Elasticsearch"""
-    payload = {"pipeline": pipeline_data, docs_data}
+    payload = {"pipeline": pipeline_data, **docs_data}
     try:
         response = requests.post(
             f"{elasticsearch_url}/_ingest/pipeline/_simulate",
