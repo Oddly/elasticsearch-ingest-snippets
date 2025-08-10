@@ -8,50 +8,57 @@
         "params": {
           "target_field": "related.hosts",
           "source_fields": [
-            "host.name",
-            "host.hostname",
-            "source.domain",
-            "destination.domain",
-            "client.domain",
-            "server.domain",
-            "url.domain",
-            "url.registered_domain",
-            "dns.question.name",
-            "dns.answers.name",
-            "tls.client.server_name",
-            "tls.server.subject.common_name",
-            "tls.client.subject.common_name",
-            "x509.subject.common_name",
-            "x509.issuer.common_name"
+            "host.name", "host.hostname", "source.domain", "destination.domain",
+            "client.domain", "server.domain", "url.domain", "url.registered_domain",
+            "dns.question.name", "dns.answers.name", "tls.client.server_name",
+            "tls.server.subject.common_name", "tls.client.subject.common_name",
+            "x509.subject.common_name", "x509.issuer.common_name"
           ]
         },
         "source": """
-          if (ctx.related == null) {
-            ctx.related = new HashMap();
-          }
-
+          // From the target_field 'related.hosts', extract the final field name 'hosts'.
+          // This makes the script more reusable for other 'related.*' fields.
           String targetFieldName = params.target_field.substring(params.target_field.lastIndexOf('.') + 1);
 
-          if (ctx.related[targetFieldName] == null) {
-            ctx.related[targetFieldName] = new ArrayList();
-          }
-
+          // Loop through each potential source field defined in the 'source_fields' parameter.
           for (String field : params.source_fields) {
+            
+            // This block safely navigates the document (ctx) to get a nested value.
+            // For example, for 'dns.question.name', it checks for ctx['dns'], then ctx['dns']['question'], etc.
             def value = ctx;
             String[] parts = field.splitOnToken('.');
             boolean exists = true;
-            
+
             for (String part : parts) {
-              if (value != null && value instanceof Map && value.containsKey(part)) {
+              // Check if the current level exists and is a Map before trying to access the next level.
+              if (value instanceof Map && value.containsKey(part)) {
                 value = value[part];
               } else {
+                // If any part of the path doesn't exist, we mark it and stop drilling down.
                 exists = false;
                 break;
               }
             }
-            
-            if (exists && value != null && value != '' && !ctx.related[targetFieldName].contains(value)) {
-              ctx.related[targetFieldName].add(value);
+
+            // After traversing, check if the field existed and has a meaningful, non-empty value.
+            if (exists && value != null && value != '') {
+
+              // === Lazy Initialization ===
+              // IMPORTANT: Only create the 'related' map and the 'hosts' list if we have found
+              // our *first* valid value. This elegant solution prevents creating empty fields
+              // if no source fields are found in the document.
+              if (ctx.related == null) {
+                ctx.related = new HashMap();
+              }
+              if (ctx.related[targetFieldName] == null) {
+                ctx.related[targetFieldName] = new ArrayList();
+              }
+              
+              // Now that we know the list exists, add the value, but only if it's not already there.
+              // This prevents duplicate entries in the 'related.hosts' list.
+              if (!ctx.related[targetFieldName].contains(value)) {
+                ctx.related[targetFieldName].add(value);
+              }
             }
           }
         """,

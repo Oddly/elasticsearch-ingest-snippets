@@ -1,6 +1,6 @@
+---
 # Enhanced GitHub Actions workflow to validate Elasticsearch ingest pipelines
 name: Validate Ingest Pipelines
-
 on:
   push:
     branches: ["main", "pipeline_testing"]
