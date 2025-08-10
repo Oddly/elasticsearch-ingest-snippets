@@ -39,7 +39,7 @@ def log_github_error(message: str, file_path: Path):
 
 
 def wait_for_elasticsearch(request_kwargs: RequestKwargs, elasticsearch_url: str = "http://localhost:9200", timeout: int = 120):
-    console.print("Waiting for Elasticsearch to start...")
+    console.print("\nWaiting for Elasticsearch to start...")
     with console.status("[yellow]Pinging Elasticsearch...", spinner="dots"):
         start_time = time.time()
         while time.time() - start_time < timeout:
@@ -54,7 +54,7 @@ def wait_for_elasticsearch(request_kwargs: RequestKwargs, elasticsearch_url: str
         else:
             raise ConnectionTimeoutError(f"Elasticsearch did not start at {elasticsearch_url} within {timeout} seconds")
 
-    console.print("Waiting for Elasticsearch cluster to be healthy...")
+    console.print("\nWaiting for Elasticsearch cluster to be healthy...")
     with console.status("[yellow]Checking cluster health...", spinner="dots"):
         start_time = time.time()
         while time.time() - start_time < 60:
@@ -270,7 +270,9 @@ def main() -> int:
             if not pipelines_to_run:
                 console.print(f"[red]No pipeline directories found in {pipelines_base_dir}. Nothing to do.[/red]")
                 return 0
-            console.print(f"Found and will test the following: [bold]{', '.join(pipelines_to_run)}[/bold]")
+            console.print(f"Found and will test the following:")
+            for pipeline_name in pipelines_to_run:
+                console.print(f"    [dim][bold]{(pipeline_name)}[/bold][/dim]")
         except FileNotFoundError:
             console.print(f"[red]Error: The directory {pipelines_base_dir} does not exist. Exiting.[/red]")
             return 1
