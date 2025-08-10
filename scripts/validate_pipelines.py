@@ -316,6 +316,114 @@ class ResultNormalizer:
         return result
 
 
+class ResultComparator:
+    """Handles comparison of pipeline results."""
+    
+    @staticmethod
+    def compare_results(expected: Any, actual: Any, test_name: str) -> Optional[str]:
+        """Compare expected vs actual results and return human-readable diff if different."""
+        normalized_expected = ResultNormalizer.normalize(expected)
+        normalized_actual = ResultNormalizer.normalize(actual)
+        
+        diff = DeepDiff(normalized_expected, normalized_actual, ignore_order=True)
+        
+        if not diff:
+            return None
+        
+        return ResultComparator._format_diff_message(diff, test_name)
+    
+    @staticmethod
+    def _format_diff_message(diff: DeepDiff, test_name: str) -> str:
+        """Format DeepDiff output into a more readable error message."""
+        error_parts = [f"Test case '{test_name}' failed with the following differences:"]
+        
+        # Handle field mismatches (added + removed = likely renamed/typo)
+        fields_only_in_actual = set()
+        fields_only_in_expected = set()
+        
+        if 'dictionary_item_added' in diff:
+            # These are fields present in actual result but missing from expected result
+            fields_only_in_actual = {ResultComparator._clean_path(str(item)) for item in diff['dictionary_item_added']}
+        
+        if 'dictionary_item_removed' in diff:
+            # These are fields present in expected result but missing from actual result  
+            fields_only_in_expected = {ResultComparator._clean_path(str(item)) for item in diff['dictionary_item_removed']}
+        
+        # If we have both, try to pair them up as likely renames/typos
+        if fields_only_in_actual and fields_only_in_expected:
+            error_parts.append("\n🔄 Field mismatches (likely typos or renames):")
+            
+            # Simple pairing: if same number, pair them up
+            actual_list = sorted(fields_only_in_actual)
+            expected_list = sorted(fields_only_in_expected)
+            
+            if len(actual_list) == len(expected_list):
+                for found_field, expected_field in zip(expected_list, actual_list):
+                    error_parts.append(f"   Found: '{found_field}' but expected: '{expected_field}'")
+                # Clear these since we've handled them
+                fields_only_in_actual.clear()
+                fields_only_in_expected.clear()
+            else:
+                # Different counts, show them separately
+                for field in actual_list:
+                    error_parts.append(f"   Unexpected field found: '{field}'")
+                for field in expected_list:
+                    error_parts.append(f"   Expected field missing: '{field}'")
+                fields_only_in_actual.clear()
+                fields_only_in_expected.clear()
+        
+        # Handle remaining additions (if any)
+        if fields_only_in_actual:
+            error_parts.append("\n📝 Unexpected fields found in actual result:")
+            for item in sorted(fields_only_in_actual):
+                error_parts.append(f"   + {item}")
+        
+        # Handle remaining removals (if any)  
+        if fields_only_in_expected:
+            error_parts.append("\n❌ Expected fields missing from actual result:")
+            for item in sorted(fields_only_in_expected):
+                error_parts.append(f"   - {item}")
+        
+        if 'values_changed' in diff:
+            changed_items = diff['values_changed']
+            error_parts.append("\n🔄 Field values that differ:")
+            for path, change in changed_items.items():
+                clean_path = ResultComparator._clean_path(str(path))
+                old_val = change.get('old_value', 'N/A')
+                new_val = change.get('new_value', 'N/A')
+                error_parts.append(f"   '{clean_path}': found '{new_val}' but expected '{old_val}'")
+        
+        if 'type_changes' in diff:
+            type_changes = diff['type_changes']
+            error_parts.append("\n🔀 Field type mismatches:")
+            for path, change in type_changes.items():
+                clean_path = ResultComparator._clean_path(str(path))
+                old_type = change.get('old_type', 'unknown').__name__
+                new_type = change.get('new_type', 'unknown').__name__
+                error_parts.append(f"   '{clean_path}': found {new_type} but expected {old_type}")
+        
+        # If we have other types of changes, include the raw diff
+        other_changes = {k: v for k, v in diff.items() 
+                        if k not in ['dictionary_item_added', 'dictionary_item_removed', 'values_changed', 'type_changes']}
+        if other_changes:
+            error_parts.append(f"\n🔍 Other changes:\n{str(other_changes)}")
+        
+        return "\n".join(error_parts)
+    
+    @staticmethod
+    def _clean_path(path: str) -> str:
+        """Clean up DeepDiff path format to be more readable."""
+        # Remove 'root' and clean up the path format
+        cleaned = path.replace("root", "")
+        # Convert from ['key'] format to .key format
+        cleaned = re.sub(r"\['([^']+)'\]", r".\1", cleaned)
+        # Convert from [0] format to [0] format (keep array indices as-is)
+        cleaned = re.sub(r"\[(\d+)\]", r"[\1]", cleaned)
+        # Remove leading dot
+        cleaned = cleaned.lstrip(".")
+        return cleaned if cleaned else "root"
+
+
 class TestGenerator:
     """Generates dynamic test cases for pipeline testing."""
     
@@ -477,14 +585,9 @@ class PipelineTestRunner:
         expected_result = self.pipeline_loader.load_json_file(results_file)
         actual_result = self.es_client.simulate_pipeline(pipeline_data, example_data)
         
-        diff = DeepDiff(
-            self.normalizer.normalize(expected_result),
-            self.normalizer.normalize(actual_result),
-            ignore_order=True
-        )
-        
-        if diff:
-            raise PipelineTestError(f"Test case '{test_name}' failed: {diff.pretty()}")
+        error_message = ResultComparator.compare_results(expected_result, actual_result, test_name)
+        if error_message:
+            raise PipelineTestError(error_message)
     
     def _run_dynamic_tests(
         self, 
@@ -511,14 +614,9 @@ class PipelineTestRunner:
                     expected_result = self.es_client.simulate_pipeline(pipeline_data, input_doc)
                     actual_result = self.es_client.simulate_pipeline(pipeline_data, input_doc)
                     
-                    diff = DeepDiff(
-                        self.normalizer.normalize(expected_result),
-                        self.normalizer.normalize(actual_result),
-                        ignore_order=True
-                    )
-                    
-                    if diff:
-                        raise PipelineTestError(f"Test '{test_name}' failed: {diff.pretty()}")
+                    error_message = ResultComparator.compare_results(expected_result, actual_result, test_name)
+                    if error_message:
+                        raise PipelineTestError(error_message)
                     
                     results.test_results.append(
                         TestResult(name=f"dynamic/{test_name}", status=TestStatus.PASSED)
@@ -576,28 +674,17 @@ class PipelineTestRunner:
         """Handle a test failure by logging and recording it."""
         log_github_error(error_msg, Path("pipeline.json"))  # Generic path for GitHub Actions
         
-        # Extract diff details if present
-        details = None
-        if "failed:" in error_msg and error_msg.count(":") >= 2:
-            parts = error_msg.split(":", 2)
-            if len(parts) >= 3:
-                details = parts[2].strip()
-        
         results.test_results.append(
             TestResult(
                 name=test_name, 
                 status=TestStatus.FAILED, 
-                error_message=error_msg,
-                details=details
+                error_message=error_msg
             )
         )
         
-        panel_content = f"[bold]Test '{test_name}' failed.[/bold]\nDetails: {error_msg}"
-        if details:
-            panel_content += f"\n\n[bold]Diff:[/bold]\n{details}"
-        
+        # Create a more readable panel for the console
         self.console.print(
-            Panel(panel_content, title="[red]Test Failure", border_style="red")
+            Panel(error_msg, title="[red]Test Failure", border_style="red")
         )
 
 
